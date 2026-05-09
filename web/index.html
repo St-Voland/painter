@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Painter - Web Version</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Image Painter</h1>
+        
+        <div class="controls-section">
+            <div class="button-group">
+                <button id="loadBgBtn">Load Background</button>
+                <button id="loadFgBtn">Load Foreground</button>
+                <button id="saveResultBtn">Save Result</button>
+            </div>
+
+            <div class="input-group">
+                <label>Width: <input type="number" id="widthInput" min="1" value="800"></label>
+                <label>Height: <input type="number" id="heightInput" min="1" value="600"></label>
+                <button id="resizeBgBtn">Resize BG</button>
+                <button id="resizeFgBtn">Resize FG</button>
+                <button id="resizeResultBtn">Resize Result</button>
+            </div>
+
+            <div class="dropdown-group">
+                <label>View Mode:
+                    <select id="viewMode">
+                        <option value="BGR">BGR</option>
+                        <option value="Grayscale">Grayscale</option>
+                        <option value="Binary">Binary</option>
+                        <option value="Contours">Contours</option>
+                    </select>
+                </label>
+                <label>Drag Mode:
+                    <select id="dragMode">
+                        <option value="Foreground">Foreground</option>
+                        <option value="Background">Background</option>
+                        <option value="Result">Result</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+
+        <div class="canvas-container">
+            <canvas id="canvas" width="800" height="600"></canvas>
+        </div>
+
+        <div class="info-section">
+            <div id="info" class="info-text">No images loaded</div>
+            <div id="contourInfo" class="info-text"></div>
+        </div>
+    </div>
+
+    <input type="file" id="bgFile" accept="image/*" style="display:none">
+    <input type="file" id="fgFile" accept="image/*" style="display:none">
+
+    <script src="js/imageprocessing.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
