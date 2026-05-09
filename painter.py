@@ -3,6 +3,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk
 import cv2
 import numpy as np
+import random
 
 class ImagePainter:
     def __init__(self, root):
@@ -85,9 +86,21 @@ class ImagePainter:
         self.drag_dropdown = tk.OptionMenu(drag_frame, self.drag_mode, "Foreground", "Background", "Result")
         self.drag_dropdown.pack(side=tk.LEFT)
 
+        # View mode dropdown
+        view_frame = tk.Frame(root)
+        view_frame.pack()
+        tk.Label(view_frame, text="View Mode:").pack(side=tk.LEFT)
+        self.view_mode = tk.StringVar(value="BGR")
+        self.view_dropdown = tk.OptionMenu(view_frame, self.view_mode, "BGR", "Grayscale", "Binary", "Contours", command=self.on_view_change)
+        self.view_dropdown.pack(side=tk.LEFT)
+
         # Info label
         self.info_label = tk.Label(root, text="No images loaded", justify=tk.LEFT)
         self.info_label.pack()
+
+        # Contour info label
+        self.contour_info_label = tk.Label(root, text="", justify=tk.LEFT)
+        self.contour_info_label.pack()
 
     def load_background(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp")])
@@ -131,6 +144,33 @@ class ImagePainter:
             composite.paste(bg_copy, (int(self.bg_x - min_x), int(self.bg_y - min_y)))
             mask = self.foreground.split()[-1]
             composite.paste(self.foreground, (int(self.fg_x - min_x), int(self.fg_y - min_y)), mask)
+            if self.view_mode.get() == "Grayscale":
+                composite = composite.convert('L')
+            elif self.view_mode.get() == "Binary":
+                composite = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
+            elif self.view_mode.get() == "Contours":
+                # Convert to binary
+                binary = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
+                # Convert to cv2
+                binary_np = np.array(binary)
+                # Find contours
+                contours, _ = cv2.findContours(binary_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Create color image
+                color_img = np.zeros((binary_np.shape[0], binary_np.shape[1], 3), dtype=np.uint8)
+                # Draw filled contours with random colors
+                for contour in contours:
+                    color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                    cv2.fillPoly(color_img, [contour], color)
+                # Convert BGR to RGB for PIL
+                color_img = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
+                # Convert back to PIL
+                composite = Image.fromarray(color_img)
+                # Update contour info
+                num_contours = len(contours)
+                total_area = sum(cv2.contourArea(c) for c in contours)
+                self.contour_info_label.config(text=f"Contours: {num_contours}, Total area: {total_area:.0f}px²")
+            else:
+                self.contour_info_label.config(text="")
             self.composite_image = ImageTk.PhotoImage(composite)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.composite_image)
             if self.result_width and self.result_height:
@@ -150,11 +190,20 @@ class ImagePainter:
             height = max_y - min_y
             composite = Image.new('RGBA', (width, height), (0, 0, 0, 0))
             composite.paste(bg_copy, (int(max(0, self.bg_x - min_x)), int(max(0, self.bg_y - min_y))))
+            if self.view_mode.get() == "Grayscale":
+                composite = composite.convert('L')
+            elif self.view_mode.get() in ["Binary", "Contours"]:
+                composite = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
             self.composite_image = ImageTk.PhotoImage(composite)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.composite_image)
             self.canvas.config(scrollregion=(0, 0, width, height))
         elif self.foreground:
-            self.composite_image = ImageTk.PhotoImage(self.foreground)
+            fg_copy = self.foreground.copy()
+            if self.view_mode.get() == "Grayscale":
+                fg_copy = fg_copy.convert('L')
+            elif self.view_mode.get() in ["Binary", "Contours"]:
+                fg_copy = fg_copy.convert('L').point(lambda p: 0 if p < 127 else 255)
+            self.composite_image = ImageTk.PhotoImage(fg_copy)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.composite_image)
             self.canvas.config(scrollregion=(0, 0, self.foreground.width, self.foreground.height))
         else:
@@ -210,6 +259,9 @@ class ImagePainter:
 
     def end_drag(self, event):
         self.dragging = False
+
+    def on_view_change(self, value):
+        self.update_display()
 
     def resize_background(self):
         if self.original_background:
