@@ -53,6 +53,9 @@ class ImagePainter:
         self.zoom_level = 1.0
         self._contour_polys = None
         self._component_pixels = None
+        self._undo_stack = []
+        self._redo_stack = []
+        self._max_undo = 50
 
         view_frame = tk.Frame(root)
         view_frame.pack()
@@ -69,6 +72,11 @@ class ImagePainter:
         tk.Button(zoom_frame, text="Zoom In", command=self.zoom_in).pack(side=tk.LEFT)
         tk.Button(zoom_frame, text="Zoom Out", command=self.zoom_out).pack(side=tk.LEFT)
         tk.Button(zoom_frame, text="Reset Zoom", command=self.zoom_reset).pack(side=tk.LEFT)
+
+        undo_frame = tk.Frame(root)
+        undo_frame.pack()
+        tk.Button(undo_frame, text="Undo", command=self.undo).pack(side=tk.LEFT)
+        tk.Button(undo_frame, text="Redo", command=self.redo).pack(side=tk.LEFT)
 
         mouse_frame = tk.Frame(root)
         mouse_frame.pack()
@@ -136,6 +144,7 @@ class ImagePainter:
             self.update_info()
 
     def _compute_view(self):
+        self._save_snapshot()
         self._contour_polys = None
         self._component_pixels = None
 
@@ -254,6 +263,7 @@ class ImagePainter:
     def _click_contour(self, event, random_color):
         if not self.image or self._processed is None:
             return
+        self._save_snapshot()
         img_x, img_y = self._get_image_coords(event)
         view = self.view_mode.get()
 
@@ -308,6 +318,43 @@ class ImagePainter:
         self.a_entry.delete(0, tk.END)
         self.a_entry.insert(0, str(a))
         self._update_preview()
+
+    def _current_snapshot(self):
+        return (
+            self._processed.copy() if self._processed is not None else None,
+            self._contour_info,
+            [c.copy() for c in self._contour_polys] if self._contour_polys is not None else None,
+            [list(p) for p in self._component_pixels] if self._component_pixels is not None else None,
+        )
+
+    def _restore_snapshot(self, snapshot):
+        processed, contour_info, contour_polys, component_pixels = snapshot
+        self._processed = processed.copy() if processed is not None else None
+        self._contour_info = contour_info
+        self._contour_polys = contour_polys
+        self._component_pixels = component_pixels
+
+    def _save_snapshot(self):
+        self._undo_stack.append(self._current_snapshot())
+        if len(self._undo_stack) > self._max_undo:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+
+    def undo(self):
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(self._current_snapshot())
+        self._restore_snapshot(self._undo_stack.pop())
+        self.update_display()
+        self.update_info()
+
+    def redo(self):
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(self._current_snapshot())
+        self._restore_snapshot(self._redo_stack.pop())
+        self.update_display()
+        self.update_info()
 
     def zoom_in(self):
         self.zoom_level *= 1.25
