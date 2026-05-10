@@ -60,9 +60,9 @@ class ImagePainter:
         view_frame = tk.Frame(root)
         view_frame.pack()
         tk.Label(view_frame, text="View Mode:").pack(side=tk.LEFT)
-        self.view_mode = tk.StringVar(value="BGR")
+        self.view_mode = tk.StringVar(value="RGBA")
         self.view_dropdown = tk.OptionMenu(
-            view_frame, self.view_mode, "BGR", "Grayscale", "Binary", "Contours", "Flood Fill",
+            view_frame, self.view_mode, "RGBA", "Grayscale", "Binary", "Contours", "Flood Fill",
             command=self.on_view_change
         )
         self.view_dropdown.pack(side=tk.LEFT)
@@ -156,6 +156,30 @@ class ImagePainter:
         composite = self.image.copy()
         view = self.view_mode.get()
 
+        # Compute binary components once for reuse across all modes
+        binary = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
+        binary_np = np.array(binary)
+        h, w = binary_np.shape
+        visited = np.zeros_like(binary_np, dtype=bool)
+        components = []
+        for y in range(h):
+            for x in range(w):
+                if binary_np[y, x] > 127 and not visited[y, x]:
+                    stack = [(x, y)]
+                    pixels = []
+                    while stack:
+                        cx, cy = stack.pop()
+                        if cx < 0 or cx >= w or cy < 0 or cy >= h:
+                            continue
+                        if visited[cy, cx] or binary_np[cy, cx] <= 127:
+                            continue
+                        visited[cy, cx] = True
+                        pixels.append((cx, cy))
+                        stack.extend([(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)])
+                    if len(pixels) > 10:
+                        components.append(pixels)
+        self._component_pixels = components
+
         if view == "Grayscale":
             composite = composite.convert('L')
             self._contour_info = ""
@@ -163,10 +187,8 @@ class ImagePainter:
             composite = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
             self._contour_info = ""
         elif view == "Contours":
-            binary = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
-            binary_np = np.array(binary)
             contours, _ = cv2.findContours(binary_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            color_img = np.zeros((binary_np.shape[0], binary_np.shape[1], 4), dtype=np.uint8)
+            color_img = np.zeros((h, w, 4), dtype=np.uint8)
             color_img[:, :, 3] = 255
             for contour in contours:
                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 255)
@@ -178,40 +200,15 @@ class ImagePainter:
             self._contour_polys = contours
             self._contour_info = f"Contours: {num_contours}, Total area: {total_area:.0f}px²"
         elif view == "Flood Fill":
-            binary = composite.convert('L').point(lambda p: 0 if p < 127 else 255)
-            binary_np = np.array(binary)
-            h, w = binary_np.shape
-            visited = np.zeros_like(binary_np, dtype=bool)
             color_img = np.zeros((h, w, 4), dtype=np.uint8)
             color_img[:, :, 3] = 255
-            components = []
-
-            for y in range(h):
-                for x in range(w):
-                    if binary_np[y, x] > 127 and not visited[y, x]:
-                        stack = [(x, y)]
-                        pixels = []
-                        while stack:
-                            cx, cy = stack.pop()
-                            if cx < 0 or cx >= w or cy < 0 or cy >= h:
-                                continue
-                            if visited[cy, cx] or binary_np[cy, cx] <= 127:
-                                continue
-                            visited[cy, cx] = True
-                            pixels.append((cx, cy))
-                            stack.extend([(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)])
-                        if len(pixels) > 10:
-                            components.append(pixels)
-
             for component in components:
                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 255)
                 for px, py in component:
                     color_img[py, px] = color
-
             composite = Image.fromarray(color_img, 'RGBA')
             num_contours = len(components)
             total_area = sum(len(c) for c in components)
-            self._component_pixels = components
             self._contour_info = f"Flood fill: {num_contours}, Total area: {total_area:.0f}px²"
         else:
             self._contour_info = ""
@@ -267,21 +264,7 @@ class ImagePainter:
         img_x, img_y = self._get_image_coords(event)
         view = self.view_mode.get()
 
-        if view == "Contours" and self._contour_polys is not None:
-            np_img = np.array(self._processed)
-            for contour in self._contour_polys:
-                if cv2.pointPolygonTest(contour, (img_x, img_y), False) >= 0:
-                    if random_color:
-                        color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 255)
-                    else:
-                        color = self.selected_color
-                    cv2.fillPoly(np_img, [contour], color)
-                    cv2.drawContours(np_img, [contour], -1, (0, 0, 0, 255), 1)
-                    self._processed = Image.fromarray(np_img, 'RGBA')
-                    self.update_display()
-                    return
-
-        elif view == "Flood Fill" and self._component_pixels is not None:
+        if view in ("RGBA", "Flood Fill") and self._component_pixels is not None:
             np_img = np.array(self._processed)
             for pixels in self._component_pixels:
                 for px, py in pixels:
@@ -295,6 +278,20 @@ class ImagePainter:
                         self._processed = Image.fromarray(np_img, 'RGBA')
                         self.update_display()
                         return
+
+        elif view == "Contours" and self._contour_polys is not None:
+            np_img = np.array(self._processed)
+            for contour in self._contour_polys:
+                if cv2.pointPolygonTest(contour, (img_x, img_y), False) >= 0:
+                    if random_color:
+                        color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 255)
+                    else:
+                        color = self.selected_color
+                    cv2.fillPoly(np_img, [contour], color)
+                    cv2.drawContours(np_img, [contour], -1, (0, 0, 0, 255), 1)
+                    self._processed = Image.fromarray(np_img, 'RGBA')
+                    self.update_display()
+                    return
 
     def _click_pick_color(self, event):
         if self._processed is None:
