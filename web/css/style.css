@@ -79,6 +79,7 @@ button:active {
 }
 
 .dropdown-group {
+    margin-bottom: 10px;
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
@@ -99,12 +100,32 @@ select {
     cursor: pointer;
 }
 
+.color-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.color-preview {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+.color-input {
+    width: 55px !important;
+}
+
 .canvas-container {
     margin: 20px 0;
     border: 2px solid #ddd;
     border-radius: 5px;
     overflow: auto;
-    background-color: #fafafa;
+    background-color: #888;
     display: flex;
     justify-content: center;
     align-items: flex-start;
@@ -141,7 +162,7 @@ canvas {
         padding: 10px;
     }
 
-    .button-group, .input-group, .dropdown-group {
+    .button-group, .input-group, .dropdown-group, .color-group {
         flex-direction: column;
     }
 
@@ -149,7 +170,7 @@ canvas {
         width: 100%;
     }
 
-    .input-group label, .dropdown-group label {
+    .input-group label, .dropdown-group label, .color-group label {
         width: 100%;
     }
 

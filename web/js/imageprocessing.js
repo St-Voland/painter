@@ -1,5 +1,3 @@
-// Image Processing Utilities
-
 class ImageProcessor {
     static loadImage(file) {
         return new Promise((resolve, reject) => {
@@ -15,11 +13,6 @@ class ImageProcessor {
         });
     }
 
-    static drawImageToCanvas(canvas, img, offsetX = 0, offsetY = 0) {
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, offsetX, offsetY);
-    }
-
     static resizeImage(img, width, height) {
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -29,14 +22,6 @@ class ImageProcessor {
         const newImg = new Image();
         newImg.src = canvas.toDataURL();
         return newImg;
-    }
-
-    static getImageData(canvas) {
-        return canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-    }
-
-    static putImageData(canvas, imageData) {
-        canvas.getContext('2d').putImageData(imageData, 0, 0);
     }
 
     static convertToGrayscale(imageData) {
@@ -54,112 +39,102 @@ class ImageProcessor {
         const data = imageData.data;
         for (let i = 0; i < data.length; i += 4) {
             const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-            const binary = gray < threshold ? 0 : 255;
-            data[i] = binary;
-            data[i + 1] = binary;
-            data[i + 2] = binary;
+            const val = gray < threshold ? 0 : 255;
+            data[i] = val;
+            data[i + 1] = val;
+            data[i + 2] = val;
         }
         return imageData;
     }
 
-    static findContours(imageData) {
+    static findComponents(imageData) {
         const data = imageData.data;
         const width = imageData.width;
         const height = imageData.height;
-        const visited = new Set();
-        const contours = [];
+        const visited = new Uint8Array(width * height);
+        const components = [];
 
-        // Simple contour detection using flood fill
         for (let i = 0; i < data.length; i += 4) {
-            const pixelIndex = i / 4;
-            if (data[i] > 127 && !visited.has(pixelIndex)) {
-                const contour = this.floodFill(data, width, height, pixelIndex, visited);
-                if (contour.length > 10) { // Filter small contours
-                    contours.push(contour);
+            const idx = i / 4;
+            if (data[i] > 127 && !visited[idx]) {
+                const pixels = this.floodFill(data, width, height, idx, visited);
+                if (pixels.length > 10) {
+                    components.push(pixels);
                 }
             }
         }
-        return contours;
+        return components;
     }
 
     static floodFill(data, width, height, startIndex, visited) {
         const stack = [startIndex];
-        const contour = [];
-        const x0 = startIndex % width;
-        const y0 = Math.floor(startIndex / width);
+        const pixels = [];
 
         while (stack.length > 0) {
-            const index = stack.pop();
-            if (visited.has(index)) continue;
-
-            const x = index % width;
-            const y = Math.floor(index / width);
-
+            const idx = stack.pop();
+            if (visited[idx]) continue;
+            const x = idx % width;
+            const y = Math.floor(idx / width);
             if (x < 0 || x >= width || y < 0 || y >= height) continue;
-            if (data[index * 4] <= 127) continue;
-
-            visited.add(index);
-            contour.push({x, y});
-
-            // Add neighbors
-            if (x + 1 < width) stack.push(index + 1);
-            if (x - 1 >= 0) stack.push(index - 1);
-            if (y + 1 < height) stack.push(index + width);
-            if (y - 1 >= 0) stack.push(index - width);
+            if (data[idx * 4] <= 127) continue;
+            visited[idx] = 1;
+            pixels.push({x, y});
+            if (x + 1 < width) stack.push(idx + 1);
+            if (x - 1 >= 0) stack.push(idx - 1);
+            if (y + 1 < height) stack.push(idx + width);
+            if (y - 1 >= 0) stack.push(idx - width);
         }
-
-        return contour;
+        return pixels;
     }
 
-    static calculateContourArea(contour) {
-        if (contour.length < 3) return 0;
-        let area = 0;
-        for (let i = 0; i < contour.length; i++) {
-            const current = contour[i];
-            const next = contour[(i + 1) % contour.length];
-            area += (current.x * next.y) - (next.x * current.y);
+    static findBoundaries(component, width, height) {
+        const pixelSet = new Set(component.map(p => `${p.x},${p.y}`));
+        const boundaries = [];
+        for (const p of component) {
+            const x = p.x, y = p.y;
+            if (!pixelSet.has(`${x + 1},${y}`) || !pixelSet.has(`${x - 1},${y}`) ||
+                !pixelSet.has(`${x},${y + 1}`) || !pixelSet.has(`${x},${y - 1}`)) {
+                boundaries.push(p);
+            }
         }
-        return Math.abs(area) / 2;
+        return boundaries;
     }
 
-    static drawContoursWithColors(imageData, contours) {
+    static drawComponents(imageData, components, colorFn) {
         const data = imageData.data;
-        
-        // Clear to white
         for (let i = 0; i < data.length; i += 4) {
-            data[i] = 255;
-            data[i + 1] = 255;
-            data[i + 2] = 255;
+            data[i] = 0;
+            data[i + 1] = 0;
+            data[i + 2] = 0;
             data[i + 3] = 255;
         }
-
-        // Draw each contour with random color
-        contours.forEach((contour, idx) => {
-            const r = Math.floor(Math.random() * 256);
-            const g = Math.floor(Math.random() * 256);
-            const b = Math.floor(Math.random() * 256);
-
-            contour.forEach((point) => {
-                const index = (point.y * imageData.width + point.x) * 4;
-                if (index >= 0 && index < data.length) {
-                    data[index] = r;
-                    data[index + 1] = g;
-                    data[index + 2] = b;
-                    data[index + 3] = 255;
-                }
-            });
-        });
-
+        for (const component of components) {
+            const {r, g, b, a} = colorFn();
+            for (const p of component) {
+                const idx = (p.y * imageData.width + p.x) * 4;
+                data[idx] = r;
+                data[idx + 1] = g;
+                data[idx + 2] = b;
+                data[idx + 3] = a;
+            }
+        }
         return imageData;
     }
 
-    static getImageDimensions(img) {
-        return { width: img.width, height: img.height };
-    }
-
-    static canvasToImage(canvas) {
-        const img = new Image();
-        img.src = canvas.toDataURL();
-        return img;
+    static drawBoundaries(imageData, components) {
+        const data = imageData.data;
+        const width = imageData.width;
+        const height = imageData.height;
+        for (const component of components) {
+            const boundaries = this.findBoundaries(component, width, height);
+            for (const p of boundaries) {
+                const idx = (p.y * width + p.x) * 4;
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+                data[idx + 3] = 255;
+            }
+        }
+        return imageData;
     }
 }
