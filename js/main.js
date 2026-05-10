@@ -1,315 +1,388 @@
-// Main Application Logic
-
 class ImagePainter {
     constructor() {
         this.canvas = document.getElementById('canvas');
         this.ctx = this.canvas.getContext('2d');
-        
-        this.background = null;
-        this.foreground = null;
-        this.bgWidth = null;
-        this.bgHeight = null;
-        this.fgWidth = null;
-        this.fgHeight = null;
-        
-        this.bgOffsetX = 0;
-        this.bgOffsetY = 0;
-        this.fgOffsetX = 0;
-        this.fgOffsetY = 0;
-        this.resultX = 0;
-        this.resultY = 0;
-        this.resultWidth = null;
-        this.resultHeight = null;
-        
+
+        this.originalImage = null;
+        this.image = null;
+        this.processedCanvas = null;
+        this.components = null;
+        this.contourInfo = '';
+
+        this.zoomLevel = 1.0;
+        this.panX = 0;
+        this.panY = 0;
+
+        this.selectedColor = {r: 255, g: 0, b: 0, a: 255};
+
+        this.undoStack = [];
+        this.redoStack = [];
+        this.maxUndo = 50;
+
         this.dragging = false;
         this.dragStartX = 0;
         this.dragStartY = 0;
-        
+        this.dragPanX = 0;
+        this.dragPanY = 0;
+
         this.setupEventListeners();
+        this.updateColorPreview();
     }
 
     setupEventListeners() {
-        // File inputs
-        document.getElementById('loadBgBtn').addEventListener('click', () => {
-            document.getElementById('bgFile').click();
+        const $ = id => document.getElementById(id);
+
+        $('loadBtn').addEventListener('click', () => $('fileInput').click());
+        $('fileInput').addEventListener('change', (e) => this.loadImage(e));
+
+        $('resizeBtn').addEventListener('click', () => this.resizeImage());
+        $('saveBtn').addEventListener('click', () => this.saveImage());
+        $('saveViewBtn').addEventListener('click', () => this.saveView());
+        $('undoBtn').addEventListener('click', () => this.undo());
+        $('redoBtn').addEventListener('click', () => this.redo());
+        $('zoomInBtn').addEventListener('click', () => this.zoomIn());
+        $('zoomOutBtn').addEventListener('click', () => this.zoomOut());
+        $('zoomResetBtn').addEventListener('click', () => this.zoomReset());
+
+        $('pickColorBtn').addEventListener('click', () => this.pickColorDialog());
+
+        $('viewMode').addEventListener('change', () => this.computeView());
+        ['rInput', 'gInput', 'bInput', 'aInput'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => this.updateColorFromInputs());
         });
-        document.getElementById('loadFgBtn').addEventListener('click', () => {
-            document.getElementById('fgFile').click();
+
+        this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
+        this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        this.canvas.addEventListener('mouseup', () => this.onMouseUp());
+        this.canvas.addEventListener('wheel', (e) => this.onWheel(e));
+    }
+
+    loadImage(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        ImageProcessor.loadImage(file).then(img => {
+            this.originalImage = img;
+            this.image = img;
+            this.zoomLevel = 1.0;
+            this.panX = 0;
+            this.panY = 0;
+            this.undoStack = [];
+            this.redoStack = [];
+            this.computeView();
+            this.updateInfo();
         });
-
-        document.getElementById('bgFile').addEventListener('change', (e) => this.loadBackground(e));
-        document.getElementById('fgFile').addEventListener('change', (e) => this.loadForeground(e));
-
-        // Resize buttons
-        document.getElementById('resizeBgBtn').addEventListener('click', () => this.resizeBackground());
-        document.getElementById('resizeFgBtn').addEventListener('click', () => this.resizeForeground());
-        document.getElementById('resizeResultBtn').addEventListener('click', () => this.resizeResult());
-
-        // Save button
-        document.getElementById('saveResultBtn').addEventListener('click', () => this.saveResult());
-
-        // View mode
-        document.getElementById('viewMode').addEventListener('change', () => this.updateDisplay());
-
-        // Canvas events
-        this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-        this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-        this.canvas.addEventListener('wheel', (e) => this.handleScroll(e));
     }
 
-    async loadBackground(e) {
-        const file = e.target.files[0];
-        if (file) {
-            this.background = await ImageProcessor.loadImage(file);
-            this.bgWidth = this.background.width;
-            this.bgHeight = this.background.height;
-            this.bgOffsetX = 0;
-            this.bgOffsetY = 0;
-            this.resultWidth = null;
-            this.resultHeight = null;
-            this.updateDisplay();
-            this.updateInfo();
-        }
-    }
+    computeView() {
+        if (!this.image) return;
+        this.saveSnapshot();
 
-    async loadForeground(e) {
-        const file = e.target.files[0];
-        if (file) {
-            this.foreground = await ImageProcessor.loadImage(file);
-            this.fgWidth = this.foreground.width;
-            this.fgHeight = this.foreground.height;
-            this.fgOffsetX = 0;
-            this.fgOffsetY = 0;
-            this.resultWidth = null;
-            this.resultHeight = null;
-            this.updateDisplay();
-            this.updateInfo();
-        }
-    }
+        const w = this.image.width;
+        const h = this.image.height;
 
-    resizeBackground() {
-        if (!this.background) return;
-        const width = parseInt(document.getElementById('widthInput').value);
-        const height = parseInt(document.getElementById('heightInput').value);
-        if (width > 0 && height > 0) {
-            this.background = ImageProcessor.resizeImage(this.background, width, height);
-            this.bgWidth = width;
-            this.bgHeight = height;
-            this.updateDisplay();
-            this.updateInfo();
-        }
-    }
+        this.processedCanvas = document.createElement('canvas');
+        this.processedCanvas.width = w;
+        this.processedCanvas.height = h;
+        const ctx = this.processedCanvas.getContext('2d');
+        ctx.drawImage(this.image, 0, 0);
+        let imageData = ctx.getImageData(0, 0, w, h);
 
-    resizeForeground() {
-        if (!this.foreground) return;
-        const width = parseInt(document.getElementById('widthInput').value);
-        const height = parseInt(document.getElementById('heightInput').value);
-        if (width > 0 && height > 0) {
-            this.foreground = ImageProcessor.resizeImage(this.foreground, width, height);
-            this.fgWidth = width;
-            this.fgHeight = height;
-            this.updateDisplay();
-            this.updateInfo();
-        }
-    }
+        const view = document.getElementById('viewMode').value;
 
-    resizeResult() {
-        if (!this.background || !this.foreground) return;
-        const width = parseInt(document.getElementById('widthInput').value);
-        const height = parseInt(document.getElementById('heightInput').value);
-        if (width > 0 && height > 0) {
-            this.resultWidth = width;
-            this.resultHeight = height;
-            this.resultX = 0;
-            this.resultY = 0;
-            this.updateDisplay();
-            this.updateInfo();
+        const binaryData = new ImageData(new Uint8ClampedArray(imageData.data), w, h);
+        ImageProcessor.convertToBinary(binaryData);
+        this.components = ImageProcessor.findComponents(binaryData);
+
+        if (view === 'Grayscale') {
+            imageData = ImageProcessor.convertToGrayscale(imageData);
+            this.contourInfo = '';
+        } else if (view === 'Binary') {
+            imageData = ImageProcessor.convertToBinary(imageData);
+            this.contourInfo = '';
+        } else if (view === 'Contours') {
+            const bw = new ImageData(new Uint8ClampedArray(binaryData.data), w, h);
+            imageData = ImageProcessor.drawComponents(bw, this.components, () => ({
+                r: Math.floor(Math.random() * 256),
+                g: Math.floor(Math.random() * 256),
+                b: Math.floor(Math.random() * 256),
+                a: 255
+            }));
+            imageData = ImageProcessor.drawBoundaries(imageData, this.components);
+            const totalArea = this.components.reduce((sum, c) => sum + c.length, 0);
+            this.contourInfo = `Contours: ${this.components.length}, Total area: ${totalArea}px²`;
+        } else if (view === 'Flood Fill') {
+            const bw = new ImageData(new Uint8ClampedArray(binaryData.data), w, h);
+            imageData = ImageProcessor.drawComponents(bw, this.components, () => ({
+                r: Math.floor(Math.random() * 256),
+                g: Math.floor(Math.random() * 256),
+                b: Math.floor(Math.random() * 256),
+                a: 255
+            }));
+            const totalArea = this.components.reduce((sum, c) => sum + c.length, 0);
+            this.contourInfo = `Flood fill: ${this.components.length}, Total area: ${totalArea}px²`;
+        } else {
+            this.contourInfo = '';
         }
+
+        ctx.putImageData(imageData, 0, 0);
+        this.updateDisplay();
+        document.getElementById('contourInfo').textContent = this.contourInfo;
     }
 
     updateDisplay() {
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        if (!this.background || !this.foreground) return;
+        const ctx = this.ctx;
+        const canvas = this.canvas;
+        const src = this.processedCanvas || this.image;
 
-        // Create composite
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = Math.max(
-            this.bgWidth + this.bgOffsetX,
-            this.fgWidth + this.fgOffsetX,
-            this.resultWidth || 0
-        );
-        tempCanvas.height = Math.max(
-            this.bgHeight + this.bgOffsetY,
-            this.fgHeight + this.fgOffsetY,
-            this.resultHeight || 0
-        );
-
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.fillStyle = 'white';
-        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-
-        // Draw background
-        tempCtx.drawImage(this.background, this.bgOffsetX, this.bgOffsetY);
-
-        // Draw foreground
-        tempCtx.drawImage(this.foreground, this.fgOffsetX, this.fgOffsetY);
-
-        // Get image data for processing
-        let imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-        const viewMode = document.getElementById('viewMode').value;
-
-        if (viewMode === 'Grayscale') {
-            imageData = ImageProcessor.convertToGrayscale(imageData);
-        } else if (viewMode === 'Binary') {
-            imageData = ImageProcessor.convertToBinary(imageData);
-        } else if (viewMode === 'Contours') {
-            const binaryData = ImageProcessor.convertToBinary(imageData);
-            const contours = ImageProcessor.findContours(binaryData);
-            imageData = ImageProcessor.drawContoursWithColors(binaryData, contours);
-            
-            // Update contour info
-            const totalArea = contours.reduce((sum, c) => sum + ImageProcessor.calculateContourArea(c), 0);
-            document.getElementById('contourInfo').textContent = 
-                `Contours: ${contours.length}, Total area: ${totalArea.toFixed(0)}px²`;
-        } else {
-            document.getElementById('contourInfo').textContent = '';
+        if (!src) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            return;
         }
 
-        tempCtx.putImageData(imageData, 0, 0);
+        const w = src.width * this.zoomLevel;
+        const h = src.height * this.zoomLevel;
 
-        this.canvas.width = tempCanvas.width;
-        this.canvas.height = tempCanvas.height;
-        this.ctx.drawImage(tempCanvas, 0, 0);
+        canvas.width = Math.max(800, w);
+        canvas.height = Math.max(600, h);
 
-        // Draw result rectangle if set
-        if (this.resultWidth && this.resultHeight) {
-            this.ctx.strokeStyle = 'red';
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeRect(this.resultX, this.resultY, this.resultWidth, this.resultHeight);
-        }
+        ctx.fillStyle = '#888';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(this.panX, this.panY);
+        ctx.drawImage(src, 0, 0, w, h);
+        ctx.restore();
     }
 
-    handleMouseDown(e) {
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const dragMode = document.getElementById('dragMode').value;
-
-        this.dragging = false;
-        this.dragStartX = x;
-        this.dragStartY = y;
-
-        if (dragMode === 'Result' && this.resultWidth && this.resultHeight) {
-            const inRect = x >= this.resultX && x <= this.resultX + this.resultWidth &&
-                          y >= this.resultY && y <= this.resultY + this.resultHeight;
-            if (inRect) {
-                this.dragging = true;
-            }
-        } else if (dragMode === 'Foreground' && this.foreground) {
-            this.dragging = true;
-        } else if (dragMode === 'Background' && this.background) {
-            this.dragging = true;
-        }
+    saveSnapshot() {
+        if (!this.processedCanvas) return;
+        this.undoStack.push(this.processedCanvas.toDataURL());
+        if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+        this.redoStack = [];
     }
 
-    handleMouseMove(e) {
-        if (!this.dragging) return;
+    restoreFromDataURL(src) {
+        const img = new Image();
+        img.onload = () => {
+            this.processedCanvas.width = img.width;
+            this.processedCanvas.height = img.height;
+            this.processedCanvas.getContext('2d').drawImage(img, 0, 0);
+            this.updateDisplay();
+        };
+        img.src = src;
+    }
 
-        const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const dragMode = document.getElementById('dragMode').value;
+    undo() {
+        if (this.undoStack.length === 0) return;
+        this.redoStack.push(this.processedCanvas.toDataURL());
+        this.restoreFromDataURL(this.undoStack.pop());
+    }
 
-        const deltaX = x - this.dragStartX;
-        const deltaY = y - this.dragStartY;
+    redo() {
+        if (this.redoStack.length === 0) return;
+        this.undoStack.push(this.processedCanvas.toDataURL());
+        this.restoreFromDataURL(this.redoStack.pop());
+    }
 
-        if (dragMode === 'Result') {
-            this.resultX += deltaX;
-            this.resultY += deltaY;
-        } else if (dragMode === 'Foreground') {
-            this.fgOffsetX += deltaX;
-            this.fgOffsetY += deltaY;
-        } else if (dragMode === 'Background') {
-            this.bgOffsetX += deltaX;
-            this.bgOffsetY += deltaY;
-        }
-
-        this.dragStartX = x;
-        this.dragStartY = y;
+    zoomIn() {
+        this.zoomLevel *= 1.25;
         this.updateDisplay();
-        this.updateInfo();
     }
 
-    handleMouseUp(e) {
+    zoomOut() {
+        this.zoomLevel = Math.max(this.zoomLevel / 1.25, 0.1);
+        this.updateDisplay();
+    }
+
+    zoomReset() {
+        this.zoomLevel = 1.0;
+        this.panX = 0;
+        this.panY = 0;
+        this.updateDisplay();
+    }
+
+    getImageCoords(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const canvasX = clientX - rect.left;
+        const canvasY = clientY - rect.top;
+        return {
+            x: Math.floor((canvasX - this.panX) / this.zoomLevel),
+            y: Math.floor((canvasY - this.panY) / this.zoomLevel)
+        };
+    }
+
+    onMouseDown(e) {
+        const mode = document.getElementById('mouseMode').value;
+
+        if (mode === 'Drag') {
+            if (!this.image) return;
+            this.dragging = true;
+            this.dragStartX = e.clientX;
+            this.dragStartY = e.clientY;
+            this.dragPanX = this.panX;
+            this.dragPanY = this.panY;
+        } else if (mode === 'Random Color') {
+            this.clickContour(e, true);
+        } else if (mode === 'Paint Color') {
+            this.clickContour(e, false);
+        } else if (mode === 'Pick Color') {
+            this.clickPickColor(e);
+        }
+    }
+
+    onMouseMove(e) {
+        if (!this.dragging) return;
+        const dx = e.clientX - this.dragStartX;
+        const dy = e.clientY - this.dragStartY;
+        this.panX = this.dragPanX + dx;
+        this.panY = this.dragPanY + dy;
+        this.updateDisplay();
+    }
+
+    onMouseUp() {
         this.dragging = false;
     }
 
-    handleScroll(e) {
-        // Prevent default scroll behavior
+    onWheel(e) {
         e.preventDefault();
+        if (e.deltaY < 0) this.zoomIn();
+        else this.zoomOut();
+    }
+
+    clickContour(e, randomColor) {
+        if (!this.processedCanvas || !this.components) return;
+        this.saveSnapshot();
+
+        const coords = this.getImageCoords(e.clientX, e.clientY);
+        const imgX = coords.x, imgY = coords.y;
+
+        const ctx = this.processedCanvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, this.processedCanvas.width, this.processedCanvas.height);
+        const data = imageData.data;
+
+        for (const component of this.components) {
+            let hit = false;
+            for (const p of component) {
+                if (p.x === imgX && p.y === imgY) { hit = true; break; }
+            }
+            if (hit) {
+                const color = randomColor
+                    ? {r: Math.floor(Math.random() * 256), g: Math.floor(Math.random() * 256), b: Math.floor(Math.random() * 256), a: 255}
+                    : this.selectedColor;
+                for (const p of component) {
+                    const idx = (p.y * imageData.width + p.x) * 4;
+                    data[idx] = color.r;
+                    data[idx + 1] = color.g;
+                    data[idx + 2] = color.b;
+                    data[idx + 3] = color.a;
+                }
+                if (document.getElementById('viewMode').value === 'Contours') {
+                    const boundaries = ImageProcessor.findBoundaries(component, imageData.width, imageData.height);
+                    for (const p of boundaries) {
+                        const idx = (p.y * imageData.width + p.x) * 4;
+                        data[idx] = 0;
+                        data[idx + 1] = 0;
+                        data[idx + 2] = 0;
+                        data[idx + 3] = 255;
+                    }
+                }
+                ctx.putImageData(imageData, 0, 0);
+                this.updateDisplay();
+                return;
+            }
+        }
+    }
+
+    clickPickColor(e) {
+        if (!this.processedCanvas) return;
+        const coords = this.getImageCoords(e.clientX, e.clientY);
+        const imgX = coords.x, imgY = coords.y;
+        if (imgX < 0 || imgX >= this.processedCanvas.width || imgY < 0 || imgY >= this.processedCanvas.height) return;
+
+        const pixel = this.processedCanvas.getContext('2d').getImageData(imgX, imgY, 1, 1).data;
+
+        this.selectedColor = {r: pixel[0], g: pixel[1], b: pixel[2], a: pixel[3]};
+        document.getElementById('rInput').value = pixel[0];
+        document.getElementById('gInput').value = pixel[1];
+        document.getElementById('bInput').value = pixel[2];
+        document.getElementById('aInput').value = pixel[3];
+        this.updateColorPreview();
+    }
+
+    pickColorDialog() {
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.value = '#' + [this.selectedColor.r, this.selectedColor.g, this.selectedColor.b]
+            .map(v => v.toString(16).padStart(2, '0')).join('');
+        input.addEventListener('input', () => {
+            const hex = input.value;
+            this.selectedColor.r = parseInt(hex.slice(1, 3), 16);
+            this.selectedColor.g = parseInt(hex.slice(3, 5), 16);
+            this.selectedColor.b = parseInt(hex.slice(5, 7), 16);
+            document.getElementById('rInput').value = this.selectedColor.r;
+            document.getElementById('gInput').value = this.selectedColor.g;
+            document.getElementById('bInput').value = this.selectedColor.b;
+            this.updateColorPreview();
+        });
+        input.click();
+    }
+
+    updateColorFromInputs() {
+        const get = id => Math.min(255, Math.max(0, parseInt(document.getElementById(id).value) || 0));
+        this.selectedColor = {
+            r: get('rInput'), g: get('gInput'), b: get('bInput'), a: get('aInput')
+        };
+        this.updateColorPreview();
+    }
+
+    updateColorPreview() {
+        const el = document.getElementById('colorPreview');
+        el.style.backgroundColor = `rgba(${this.selectedColor.r},${this.selectedColor.g},${this.selectedColor.b},${this.selectedColor.a / 255})`;
+    }
+
+    resizeImage() {
+        if (!this.originalImage) return;
+        const w = parseInt(document.getElementById('widthInput').value);
+        const h = parseInt(document.getElementById('heightInput').value);
+        if (w > 0 && h > 0) {
+            this.image = ImageProcessor.resizeImage(this.originalImage, w, h);
+            this.computeView();
+            this.updateDisplay();
+            this.updateInfo();
+        }
+    }
+
+    saveImage() {
+        if (!this.image) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = this.image.width;
+        canvas.height = this.image.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(this.image, 0, 0);
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = 'image.png';
+        link.click();
+    }
+
+    saveView() {
+        if (!this.processedCanvas) return;
+        const link = document.createElement('a');
+        link.href = this.processedCanvas.toDataURL('image/png');
+        link.download = 'view.png';
+        link.click();
     }
 
     updateInfo() {
-        let info = '';
-        if (this.background) {
-            info += `Background: ${this.bgWidth}x${this.bgHeight}px`;
-            if (this.bgOffsetX !== 0 || this.bgOffsetY !== 0) {
-                info += ` (offset: ${Math.round(this.bgOffsetX)}, ${Math.round(this.bgOffsetY)})`;
-            }
-            info += '\n';
+        if (this.image) {
+            document.getElementById('info').textContent =
+                `Image: ${this.image.width}x${this.image.height}px`;
+        } else {
+            document.getElementById('info').textContent = 'No image loaded';
         }
-        if (this.foreground) {
-            info += `Foreground: ${this.fgWidth}x${this.fgHeight}px`;
-            if (this.fgOffsetX !== 0 || this.fgOffsetY !== 0) {
-                info += ` (offset: ${Math.round(this.fgOffsetX)}, ${Math.round(this.fgOffsetY)})`;
-            }
-            info += '\n';
-        }
-        if (this.background && this.foreground) {
-            const resultW = this.resultWidth || this.bgWidth;
-            const resultH = this.resultHeight || this.bgHeight;
-            info += `Result: ${resultW}x${resultH}px`;
-            if (this.resultX !== 0 || this.resultY !== 0) {
-                info += ` (offset: ${Math.round(this.resultX)}, ${Math.round(this.resultY)})`;
-            }
-        }
-        document.getElementById('info').textContent = info || 'No images loaded';
-    }
-
-    saveResult() {
-        if (!this.background || !this.foreground) return;
-
-        const tempCanvas = document.createElement('canvas');
-        const resultW = this.resultWidth || this.bgWidth;
-        const resultH = this.resultHeight || this.bgHeight;
-        tempCanvas.width = resultW;
-        tempCanvas.height = resultH;
-
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.fillStyle = 'white';
-        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-
-        tempCtx.drawImage(this.background, this.bgOffsetX, this.bgOffsetY);
-        tempCtx.drawImage(this.foreground, this.fgOffsetX, this.fgOffsetY);
-
-        if (this.resultWidth && this.resultHeight) {
-            const imageData = tempCtx.getImageData(this.resultX, this.resultY, resultW, resultH);
-            tempCanvas.width = resultW;
-            tempCanvas.height = resultH;
-            tempCtx.putImageData(imageData, 0, 0);
-        }
-
-        // Download
-        const link = document.createElement('a');
-        link.href = tempCanvas.toDataURL('image/png');
-        link.download = 'result.png';
-        link.click();
     }
 }
 
-// Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     new ImagePainter();
 });
